@@ -1,2 +1,12 @@
 # Virtual environment
 calendar-venv/
+env/
+venv/
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+
+# Ignore placeholder-only files
+!.gitkeep
