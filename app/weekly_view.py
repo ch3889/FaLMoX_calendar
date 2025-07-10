@@ -6,54 +6,60 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QDate, QTime
 from PyQt5.QtGui import QPainter, QColor, QPen, QFont
 
-CELL_HEIGHT = 30
+CELL_HEIGHT = 30          # height of each hour row in pixels
+HEADER_HEIGHT = 30        # height of the day/date header row
 
 
 class ScheduleWidget(QWidget):
     def __init__(self, days, events, parent=None):
         super().__init__(parent)
-        self.days = days
-        self.events = events
+        self.days = days        # list of QDate for Sunday→Saturday
+        self.events = events    # shared dict from CalendarApp
         self.hour_height = CELL_HEIGHT
         self.minute_height = self.hour_height / 60.0
         self.day_width = 0
 
     def resizeEvent(self, event):
-        total_width = self.width()
-        self.day_width = total_width / 7.0
+        # Recompute width per day on resize
+        self.day_width = self.width() / 7.0
         super().resizeEvent(event)
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        w = int(self.width())
-        h = int(self.height())
+        total_width = int(self.width())
+        total_height = int(self.hour_height * 24)
+
+        # Draw grid lines
         pen = QPen(Qt.gray)
         painter.setPen(pen)
-        # horizontal grid lines
-        for hour in range(25):
-            y = int(hour * self.hour_height)
-            painter.drawLine(0, y, w, y)
-        # vertical grid lines
-        for col in range(8):
-            x = int(col * self.day_width)
-            painter.drawLine(x, 0, x, h)
-        # draw events with 10-min precision
+        # horizontal hour lines
+        for h in range(25):
+            y = int(h * self.hour_height)
+            painter.drawLine(0, y, total_width, y)
+        # vertical day lines (8 lines to close grid)
+        for c in range(8):
+            x = int(c * self.day_width)
+            painter.drawLine(x, 0, x, total_height)
+
+        # Draw events
         for col, day in enumerate(self.days):
             key = day.toString('yyyy-MM-dd')
             for ev in self.events.get(key, []):
                 start = ev['start']
                 end = ev['end']
+                name = ev['name']
+                # compute y positions with 10-min precision
                 y1 = int((start.hour()*60 + start.minute())
                          * self.minute_height)
                 y2 = int((end.hour()*60 + end.minute()) * self.minute_height)
                 height = max(y2 - y1, int(self.minute_height))
                 x1 = int(col * self.day_width)
-                # assign color if not exists
+                # assign stable pastel color if not set
                 if '_color' not in ev:
-                    ev['_color'] = QColor.fromHsvF(
-                        (hash(ev['name']) % 360)/360.0, 0.5, 0.9)
+                    hue = (abs(hash(name)) % 360)
+                    ev['_color'] = QColor.fromHsv(hue, 127, 229, 160)
                 color = ev['_color']
-                color.setAlpha(160)
+                # fill
                 painter.fillRect(
                     x1+1, y1+1, int(self.day_width)-2, height-2, color)
                 # border
@@ -65,7 +71,7 @@ class ScheduleWidget(QWidget):
                     x1+3, y1+12,
                     int(self.day_width)-6, height-6,
                     Qt.TextWordWrap,
-                    ev['name']
+                    name
                 )
 
 
@@ -74,74 +80,108 @@ class WeeklyView(QWidget):
         super().__init__(parent)
         self.selected_date = selected_date
         self.events = events
-        # compute Sunday-Saturday
-        dow = selected_date.dayOfWeek()
+        # determine Sunday→Saturday for this date's week
+        dow = selected_date.dayOfWeek()  # Monday=1…Sunday=7
         sunday = selected_date.addDays(- (dow % 7))
         self.days = [sunday.addDays(i) for i in range(7)]
         self._build_ui()
 
     def _build_ui(self):
-        main = QHBoxLayout(self)
-        # time labels
+        root = QHBoxLayout(self)
+
+        # ── Time labels column ──
         time_col = QWidget(self)
         tl = QVBoxLayout(time_col)
         tl.setSpacing(0)
         tl.setContentsMargins(0, 0, 0, 0)
-        for hour in range(24):
-            lbl = QLabel(f"{hour:02d}:00", time_col)
+        tl.addSpacing(HEADER_HEIGHT)
+        for h in range(24):
+            lbl = QLabel(f"{h:02d}:00", time_col)
             lbl.setFixedHeight(CELL_HEIGHT)
             lbl.setAlignment(Qt.AlignRight | Qt.AlignTop)
             tl.addWidget(lbl)
-        main.addWidget(time_col)
-        # schedule
+        root.addWidget(time_col)
+
+        # ── Schedule grid with header ──
+        sched_cont = QWidget(self)
+        sc = QVBoxLayout(sched_cont)
+        sc.setSpacing(0)
+        sc.setContentsMargins(0, 0, 0, 0)
+
+        # header row: day and date
+        header = QWidget(sched_cont)
+        hl = QHBoxLayout(header)
+        hl.setSpacing(0)
+        hl.setContentsMargins(0, 0, 0, 0)
+        for day in self.days:
+            lbl = QLabel(day.toString('ddd M/d'), header)
+            lbl.setAlignment(Qt.AlignCenter)
+            lbl.setFixedHeight(HEADER_HEIGHT)
+            hl.addWidget(lbl)
+        sc.addWidget(header)
+
+        # scrollable schedule area
         scroll = QScrollArea(self)
         self.schedule = ScheduleWidget(self.days, self.events, self)
         scroll.setWidget(self.schedule)
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        main.addWidget(scroll, 3)
-        # input panel
+        sc.addWidget(scroll)
+
+        root.addWidget(sched_cont, 3)
+
+        # ── Input panel ──
         panel = QWidget(self)
         pl = QVBoxLayout(panel)
         pl.setContentsMargins(10, 10, 10, 10)
         pl.setSpacing(8)
+
         pl.addWidget(QLabel("Event Name:"))
         self.name_input = QLineEdit()
         pl.addWidget(self.name_input)
+
         tl2 = QHBoxLayout()
         tl2.addWidget(QLabel("Start Time:"))
-        self.st = QTimeEdit()
-        self.st.setDisplayFormat("HH:mm")
-        tl2.addWidget(self.st)
+        self.start_input = QTimeEdit()
+        self.start_input.setDisplayFormat("HH:mm")
+        tl2.addWidget(self.start_input)
         tl2.addWidget(QLabel("End Time:"))
-        self.et = QTimeEdit()
-        self.et.setDisplayFormat("HH:mm")
-        tl2.addWidget(self.et)
+        self.end_input = QTimeEdit()
+        self.end_input.setDisplayFormat("HH:mm")
+        tl2.addWidget(self.end_input)
         pl.addLayout(tl2)
+
         pl.addWidget(QLabel("Notes:"))
-        self.nt = QTextEdit()
-        pl.addWidget(self.nt)
-        self.confirm = QPushButton("Confirm")
-        pl.addWidget(self.confirm)
+        self.notes_input = QTextEdit()
+        pl.addWidget(self.notes_input)
+
+        self.confirm_btn = QPushButton("Confirm")
+        pl.addWidget(self.confirm_btn)
         pl.addStretch(1)
-        main.addWidget(panel, 1)
-        self.confirm.clicked.connect(self._on_confirm)
+        root.addWidget(panel, 1)
+
+        # wire up
+        self.confirm_btn.clicked.connect(self._add_event)
         # initial render
         self.schedule.update()
 
-    def _on_confirm(self):
+    def _add_event(self):
         name = self.name_input.text().strip()
         if not name:
             return
-        start = self.st.time()
-        end = self.et.time()
-        notes = self.nt.toPlainText().strip()
+        start = self.start_input.time()
+        end = self.end_input.time()
         key = self.selected_date.toString('yyyy-MM-dd')
-        self.events.setdefault(key, []).append(
-            {'name': name, 'start': start, 'end': end, 'notes': notes})
+        self.events.setdefault(key, []).append({
+            'name': name,
+            'start': start,
+            'end': end,
+            'notes': self.notes_input.toPlainText().strip()
+        })
+        # refresh
         self.schedule.update()
-        # clear
+        # clear inputs
         self.name_input.clear()
-        self.nt.clear()
-        self.st.setTime(QTime(0, 0))
-        self.et.setTime(QTime(0, 0))
+        self.notes_input.clear()
+        self.start_input.setTime(QTime(0, 0))
+        self.end_input.setTime(QTime(0, 0))

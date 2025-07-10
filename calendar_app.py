@@ -6,24 +6,24 @@ from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QCalendarWidget, QLabel,
     QDesktopWidget, QStackedWidget, QPushButton, QToolTip, QTableView
 )
-from PyQt5.QtCore import QDate, Qt, QEvent
+from PyQt5.QtCore import QDate, Qt, QEvent, QTime
 from PyQt5.QtGui import QCursor
-from PyQt5.QtCore import QTime
 from app.weekly_view import WeeklyView
 
 
 class CalendarApp(QWidget):
     def __init__(self):
         super().__init__()
+        # consistent window size
         self.setWindowTitle("FaLMoX Calendar")
-        self.resize(800, 600)
+        self.resize(1000, 650)
         self.center()
-        # persistence
+        # load events
         self.events_file = os.path.join(
             os.path.dirname(__file__), 'events.json')
         self.events = {}
         self._load_events()
-        # UI
+        # calendar page
         self.calendar_page = self._build_calendar_page()
         self.weekly_page = None
         self.back_btn = QPushButton("← Back")
@@ -34,23 +34,23 @@ class CalendarApp(QWidget):
         layout = QVBoxLayout(self)
         layout.addWidget(self.back_btn, alignment=Qt.AlignLeft)
         layout.addWidget(self.stack)
-        # tooltip filter
+        # tooltip setup
         cv = self.calendar.findChild(QTableView)
         cv.viewport().installEventFilter(self)
         cv.setMouseTracking(True)
 
     def _build_calendar_page(self):
         w = QWidget(self)
-        lay = QVBoxLayout(w)
+        l = QVBoxLayout(w)
         self.calendar = QCalendarWidget(w)
         self.calendar.setGridVisible(True)
-        self.calendar.clicked.connect(self._open_weekly)
-        self.label = QLabel("Select a date...", w)
-        lay.addWidget(self.calendar)
-        lay.addWidget(self.label)
+        self.calendar.clicked.connect(self._open_week)
+        self.lbl = QLabel("Select a date...", w)
+        l.addWidget(self.calendar)
+        l.addWidget(self.lbl)
         return w
 
-    def _open_weekly(self, date: QDate):
+    def _open_week(self, date: QDate):
         week = WeeklyView(date, self.events, parent=self)
         self.stack.addWidget(week)
         self.weekly_page = week
@@ -60,13 +60,13 @@ class CalendarApp(QWidget):
     def _back_to_calendar(self):
         self._save_events()
         self.back_btn.hide()
-        self.stack.setCurrentWidget(self.calendar_page)
+        self.stack.setCurrentIndex(0)
 
     def _load_events(self):
         if os.path.exists(self.events_file):
             with open(self.events_file) as f:
-                data = json.load(f)
-            for k, evs in data.items():
+                d = json.load(f)
+            for k, evs in d.items():
                 self.events[k] = []
                 for ev in evs:
                     self.events[k].append({
@@ -79,50 +79,42 @@ class CalendarApp(QWidget):
     def _save_events(self):
         out = {}
         for k, evs in self.events.items():
-            out[k] = []
-            for ev in evs:
-                out[k].append({
-                    'name': ev['name'],
-                    'start': ev['start'].toString('HH:mm'),
-                    'end': ev['end'].toString('HH:mm'),
-                    'notes': ev.get('notes', '')
-                })
+            out[k] = [{'name': e['name'], 'start': e['start'].toString(
+                'HH:mm'), 'end': e['end'].toString('HH:mm'), 'notes': e.get('notes', '')} for e in evs]
         with open(self.events_file, 'w') as f:
             json.dump(out, f, indent=2)
 
     def eventFilter(self, obj, ev):
         if ev.type() == QEvent.MouseMove:
             cv = self.calendar.findChild(QTableView)
-            pos = ev.pos()
-            idx = cv.indexAt(pos)
+            idx = cv.indexAt(ev.pos())
             if idx.isValid():
                 v = idx.data()
-                try:
+                if isinstance(v, int):
+                    v = str(v)
+                if v and v.isdigit():
                     day = int(v)
-                except Exception:
-                    return super().eventFilter(obj, ev)
-                m = self.calendar.monthShown()
-                y = self.calendar.yearShown()
-                date = QDate(y, m, day)
-                key = date.toString('yyyy-MM-dd')
-                evs = self.events.get(key, [])
-                if evs:
-                    lines = [
-                        f"{e['name']}: {e['start'].toString('HH:mm')}-{e['end'].toString('HH:mm')}" for e in evs]
-                    QToolTip.showText(QCursor.pos(), "\n".join(lines), self)
-                else:
-                    QToolTip.hideText()
+                    m = self.calendar.monthShown()
+                    y = self.calendar.yearShown()
+                    key = QDate(y, m, day).toString('yyyy-MM-dd')
+                    evs = self.events.get(key, [])
+                    if evs:
+                        txt = "\n".join(
+                            f"{e['name']}: {e['start'].toString('HH:mm')}-{e['end'].toString('HH:mm')}" for e in evs)
+                        QToolTip.showText(QCursor.pos(), txt, self)
+                    else:
+                        QToolTip.hideText()
         return super().eventFilter(obj, ev)
 
     def center(self):
-        frame = self.frameGeometry()
+        f = self.frameGeometry()
         cp = QDesktopWidget().availableGeometry().center()
-        frame.moveCenter(cp)
-        self.move(frame.topLeft())
+        f.moveCenter(cp)
+        self.move(f.topLeft())
 
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    window = CalendarApp()
-    window.show()
+    win = CalendarApp()
+    win.show()
     sys.exit(app.exec_())
